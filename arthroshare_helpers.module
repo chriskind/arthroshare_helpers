@@ -1,0 +1,539 @@
+<?php
+
+function arthroshare_helpers_admin_form($form, &$form_state) {
+  $form = array();
+  
+  $form['survey_gizmo_uid'] = array(
+      '#type' => 'textfield', 
+      '#title' => t('Survey Gizmo User ID Number'), 
+      '#default_value' => variable_get('survey_gizmo_uid', NULL), 
+      '#size' => 15, 
+      '#maxlength' => 255, 
+      '#description' => t("User ID Number for Survey Gizmo (NOT the Username)"), 
+      '#required' => FALSE
+  );
+  
+  $form['survey_gizmo_user'] = array(
+      '#type' => 'textfield', 
+      '#title' => t('Survey Gizmo Username'), 
+      '#default_value' => variable_get('survey_gizmo_user', NULL), 
+      '#size' => 15, 
+      '#maxlength' => 255, 
+      '#description' => t("Username Survey Gizmo"), 
+      '#required' => FALSE
+  );
+  
+  $form['survey_gizmo_pass'] = array(
+      '#type' => 'textfield', 
+      '#title' => t('Survey Gizmo Pass'), 
+      '#default_value' => variable_get('survey_gizmo_pass', NULL), 
+      '#size' => 15, 
+      '#maxlength' => 255, 
+      '#description' => t("Password for Survey Gizmo"), 
+      '#required' => FALSE
+  );
+  
+  $form['survey_gizmo_link'] = array(
+      '#type' => 'textfield', 
+      '#title' => t('Survey Gizmo API Link'), 
+      '#default_value' => variable_get('survey_gizmo_link', 'https://restapi.surveygizmo.com/v3/survey'), 
+      '#size' => 15, 
+      '#maxlength' => 255, 
+      '#description' => t("Link to the Survey Gizmo API. Pay attention to the version you are using, it could impact functionality"), 
+      '#required' => FALSE
+  );
+  
+  $form['test_mode'] = array(
+      '#type' => 'select', 
+      '#title' => t('Test Mode'), 
+      '#options' => array(
+          0 => t('No'), 
+          1 => t('Yes')
+      ), 
+      '#default_value' => variable_get('arthroshare_test_mode', 1), 
+      '#description' => t("Provides a switch to override certain limitations in profgramming for testing purposes")
+  );
+  
+  return system_settings_form($form);
+}
+
+function arthroshare_helpers_menu() {
+  $items = array();
+  
+  $items['admin/config/authroshare/helpers'] = array(
+      'title' => 'Arthroshare Survey Gizmo & Form settings', 
+      'description' => 'Configuration for Bulk text messgages', 
+      'page callback' => 'drupal_get_form', 
+      'page arguments' => array(
+          'arthroshare_helpers_admin_form'
+      ), 
+      'access arguments' => array(
+          'access administration pages'
+      ), 
+      'type' => MENU_NORMAL_ITEM
+  );
+  
+  return $items;
+}
+
+/**
+ * Implementation of hook_webform_select_options_info().
+ * See webform/webform_hooks.php for further information on this hook in the Webform API.
+ */
+function arthroshare_helpers_webform_select_options_info() {
+  
+  module_load_include('inc', 'arthroshare_helpers', 'includes/arthroshare_forms');
+  $items = arthroshare_select_options();
+  return $items;
+}
+
+function arthroshare_helpers_views_pre_view(&$view, &$display_id, &$args) {
+  if($view->name == 'protocol_steps' && ($view->current_display == 'entityreference_2')) {
+    if(arg(0) == 'node' && is_numeric(arg(1))) {
+      $nid = arg(1);
+      $node = node_load($nid);
+      $protocol_node = adhd_field_output('field_protocol', $entity_type = 'node', $node);
+      $args[] = $protocol_node->nid;
+    }
+  }
+}
+
+function arthroshare_helpers_views_pre_render(&$view) {
+  
+  if($view->name == 'patients_dashboard' && ($view->current_display == 'block_1' | $view->current_display == 'block_3')) {
+    
+    $results = $view->result;
+    
+    foreach($results as $key => $result) {
+      
+      if(isset($result->profile_uid) && !empty($result->profile_uid)) {
+        set_arthroshare_global('patient_uid', $result->profile_uid);
+      }
+      
+      if(isset($result->field_subject_id_profile_nid) && !empty($result->field_subject_id_profile_nid)) {
+        set_arthroshare_global('case_study_nid', $result->field_subject_id_profile_nid);
+      }
+    }
+  
+  }
+  
+  if($view->name == 'protocol_for_dashboard' && ($view->current_display == 'page')) {
+    $results = $view->result;
+    
+    foreach($results as $key => $result) {
+      set_arthroshare_global('patient_uid', $result->profile_uid);
+      set_arthroshare_global('case_study_nid', $result->field_subject_id_profile_nid);
+    }
+  }
+  
+  if($view->name == 'protocol_steps' && ($view->current_display == 'block' | $view->current_display == 'block_2')) {
+    
+    global $case_study_nid;
+    global $user;
+    
+    $arthroshareDatesStepsAlerts = new arthroshareDatesStepsAlerts();
+    
+    $case_start_date = arthroshare_get_case_field_value($case_study_nid, 'field_start_date');
+    $completed_steps = $arthroshareDatesStepsAlerts->arthroshare_get_completed_steps($case_study_nid);
+    $case_start = new DateTime("$case_start_date");
+    
+    $alert_levels = $arthroshareDatesStepsAlerts->arthroshare_get_alert_levels($case_study_nid);
+    
+    $results = $view->result;
+    
+    foreach($results as $key => $result) {
+      
+      $deadline_interval = $results[$key]->field_field_protocol_step_deadline[0]['raw'];
+      
+      $due_date_info = $arthroshareDatesStepsAlerts->arthroshare_get_due_date($case_start_date, $deadline_interval, $case_start);
+      foreach($due_date_info as $variable_name => $value) {
+        $$variable_name = $value;
+      }
+      
+      if((int)$in_days <= 0) {
+        $in_days = 0;
+        $output_text = 'PAST DUE';
+      }
+      
+      if(in_array($results[$key]->nid, $completed_steps)) {
+        $completed = 'Y';
+        $class = 'complete';
+      }
+      
+      $alert_level = -1;
+      
+      if(in_array('Researcher', $user->roles) && (!isset($completed) | $completed != 'Y') && (int)$in_days <= 5) {
+        $alert_level = $arthroshareDatesStepsAlerts->arthroshare_get_alert_level((int)$in_days, $alert_levels);
+        $output_text = $alert_levels[$alert_level]['text'];
+        $class = $alert_levels[$alert_level]['class'];
+      }
+      
+      if($completed == 'Y') {
+        $class = 'complete';
+        $deadline_ouput = "<div class='$class'>FINISHED <span class='due-date'>" . $next_step->format('D, M j, Y') . "</span></div>";
+      }
+      
+      if($completed != 'Y') {
+        if((((int)$in_days > 5 && in_array('Researcher', $user->roles)) | ((int)$in_days > 0 && !in_array('Researcher', $user->roles))) && $alert_level = -1) {
+          $class = 'deadline-okay';
+          $deadline_ouput = "<div class='$class'><span class='due-text'>Due On:</span> " . $next_step->format('D, M j, Y') . ' <span class="due-text">in</span> ' . $in_days . ' days</div>';
+        } else {
+          $deadline_ouput = "<div class='$class'>$output_text - (<span class='due-text'>Due: </span>" . $next_step->format('D, M j, Y') . " / $in_days days)</div>";
+        }
+      }
+      $results[$key]->field_field_protocol_step_deadline[0]['rendered']['#markup'] = $deadline_ouput;
+    }
+  }
+}
+
+function arthroshare_patient_protocol_next_step($data) {
+  
+  global $case_study_nid;
+  
+  $arthroshareDatesStepsAlerts = new arthroshareDatesStepsAlerts();
+  
+  $iframe = new arthroshareForms();
+  $iframe->case_study_nid = $case_study_nid;
+  
+  $completed = arthroshare_get_completed_steps($case_study_nid);
+  $steps = $data->field_field_protocol_step_1;
+  
+  $params = array(
+      'node' => 'Y'
+  );
+  $steps_ordered = $arthroshareDatesStepsAlerts->arthroshare_order_protocol_steps($steps, $params);
+  
+  // print_r($steps_ordered);
+  
+
+  $last_completed_step_set = "N";
+  
+  // adhd_buffer_to_dsm_object_properties($steps_ordered, 'print_r');
+  
+
+  foreach($steps_ordered as $key => $step) {
+    
+    $nid = $step['raw']['target_id'];
+    // print "<-- key:" . $key . " :: " . $step['raw']['target_id'] . "-->\n";
+    // next($steps);
+    // print_r("Current NID: $nid ");
+    
+
+    if(!in_array($nid, $completed) && $last_completed_step_set != 'Y') {
+      // print_r(" last step triggered ");
+      $last_completed_step_set = "Y";
+      $nid = $step['raw']['target_id'];
+      
+      $iframe->step_nid = $step['raw']['target_id'];
+      $iframe->survey_id = $arthroshareDatesStepsAlerts->arthroshare_get_step_info($nid, 'field_protocol_survey_gizmo_id');
+      $iframe->protocol_nid = $arthroshareDatesStepsAlerts->athroshare_get_protocol_steps_info($case_study_nid);
+      $iframe->case_study_nid = $case_study_nid;
+      
+      $params = array(
+          'node' => 'Y'
+      );
+      $debug = $arthroshareDatesStepsAlerts->arthroshare_get_step_info($nid, 'field_protocol_survey_gizmo_id', $params);
+      // adhd_buffer_to_dsm_object_properties($debug->title, 'print_r');
+      print views_embed_view('protocol_steps', 'block_3', $nid);
+      
+      if(isset($iframe->survey_id) && !empty($iframe->survey_id)) {
+        return $iframe->build_survey_gizmo_form_embed();
+      }
+    
+    } else {
+      // print_r(" advance step ");
+    }
+  }
+  
+// print_r("Case NID: " . $iframe->case_study_nid . " ");
+// print_r("Step NID:" . $iframe->step_nid . " ");
+// print_r("Survey ID: " . $iframe->survey_id . " ");
+// print_r("Protocol ID: " . $iframe->protocol_nid . " ");
+
+
+// if(isset($iframe->survey_id) && !empty($iframe->survey_id)) {
+// return $iframe->build_survey_gizmo_form_embed();
+// }
+}
+
+function arthroshare_case_get_due_dates($case_study_nids = array(), $return_type = 'next_due') {
+  // retrieve all cases & cycle a foreach
+
+
+// retrieve all steps and cycle
+
+
+}
+
+function arthroshare_helpers_form_alter(&$form, &$form_state, $form_id) {
+  if($form_id == 'webform_client_form_34') {
+    
+    $pname = $_GET['pname'];
+    $pemail = $_GET['pemail'];
+    $message = $form['submitted']['message']['#default_value'];
+    $message = str_replace('%%name%%', $pname, $message);
+    
+    $form['submitted']['email']['#default_value'] = $pemail;
+    $form['submitted']['message']['#default_value'] = $message;
+    
+    $form['#submit'][] = 'arthroshare_send_patient_message_submit';
+    
+  // print_r($form);
+  
+
+  }
+}
+
+function arthroshare_send_patient_message_submit($form, &$form_state) {
+  
+  /*
+ * TO DO: Find out why Drupal isn't selecting transport agent on a global scale!!
+ * this is a working hack for now (below) >>> $mail = drupal_mail('smtp', 'smtp-test', $to, $language, $params);
+ * should be done this way
+ * $mail = new arthroshareMessages
+ * $mail = arthroshareMessages->arthroshare_send_patient_mail($key, &$message, $params)
+ */
+  
+  $to = $form_state['values']['submitted'][2];
+  $message = $form_state['values']['submitted'][1];
+  
+  $params['subject'] = t('Message from Arthroshare');
+  $params['body'] = array(
+      t($message)
+  );
+  $from = 'chris@adhdmedia';
+  
+  $key = 'test-email';
+  $mail = drupal_mail('smtp', 'smtp-test', $to, $language, $params);
+
+}
+
+function arthroshare_order_protocol_steps($steps, $extra_data = NULL) {
+  
+  /*
+   * Alias of $arthroshareDatesStepsAlerts->arthroshare_order_protocol_steps
+   */
+  
+  $arthroshareDatesStepsAlerts = new arthroshareDatesStepsAlerts();
+  return $arthroshareDatesStepsAlerts->arthroshare_order_protocol_steps($steps, $extra_data);
+  
+/*
+  $steps_ordered = array();
+  // print_r($steps);
+  foreach($steps as $key => $step) {
+    
+    // set the key to the interval and ksort to return ordered node ids;
+    $nid = $step['raw']['target_id'];
+    $interval = $arthroshareDatesStepsAlerts->arthroshare_get_protocol_step_deadline($nid);
+    $interval = str_replace(" ", "_", $interval);
+    
+    if(!isset($extra_data)) {
+      $interval = $arthroshareDatesStepsAlerts->arthroshare_get_protocol_step_deadline($nid);
+      $steps_ordered[$interval] = $step['raw']['target_id'];
+    } else {
+      $interval = $arthroshareDatesStepsAlerts->arthroshare_get_protocol_step_deadline($nid, '%');
+      
+      $steps_ordered[$interval] = array(
+          'nid' => $step['raw']['target_id'], 
+          'deadline' => NULL
+      );
+    }
+  
+  }
+  ksort($steps_ordered);
+  // print_r($steps_ordered);
+  return $steps_ordered;
+  */
+}
+
+// retreive start date for case
+function arthroshare_get_case_field_value($case_study_nid, $field_name) {
+  
+  $node = node_load($case_study_nid);
+  // dsm($field_name);
+  
+
+  $return_value = adhd_field_output($field_name, 'node', $node);
+  
+  if($field_name == 'field_start_date') {
+    return (date('Y-m-d', $return_value));
+  } else {
+    return $return_value;
+  }
+
+}
+
+function arthroshare_get_entity_value($params = array()) {
+  
+  foreach($param['global'] as $global) {
+    global $$global;
+  }
+  
+  foreach($param['node'] as $node) {
+    foreach($node as $field_name => $value) {
+      $return_value[$field_name] = adhd_field_output($field_name, 'node', $node);
+    }
+  }
+  
+  foreach($param['profile2'] as $profile) {
+    foreach($profile as $field_name => $value) {
+      $return_value[$field_name] = adhd_field_output($field_name, 'profile2', $profile);
+    }
+  }
+
+}
+
+function arthroshare_get_top_block_values($request = NULL) {
+  
+  if(!isset($request) | empty($request)) {
+    return;
+  }
+  
+  global $case_study_nid;
+  
+  if(isset($case_study_nid) && !empty($case_study_nid)) {
+    
+    $case_node = node_load($case_study_nid);
+    // $profile = adhd_field_output('field_subject_id', 'node', $case_node);
+    // $patient_fname =  adhd_field_output('field_first_name', 'profile2', $profile);
+    $protocol_node = adhd_field_output('field_protocol', 'node', $case_node);
+    $coordinator_name = adhd_field_output('field_protocol_coordinator', 'node', $protocol_node);
+    
+    /*
+     * Below not used right now 
+     */
+    
+    $params = array(
+        'global' => array(
+            'case_study_nid'
+        ), 
+        'node' => array(
+            'type' => 'case_study', 
+            'nid' => $case_stud_nid, 
+            'field_values' => array(
+                'field_protocol_coordinator'
+            )
+        ), 
+        'profile2' => array(
+            'profile_id' => $profile_id, 
+            'patient' => array(
+                'field_first_name'
+            )
+        )
+    );
+    
+    return($$request);
+  } else {
+    return;
+  }
+}
+
+// date due function
+
+
+// days left function
+
+
+function arthroshare_get_completed_steps($case_study_nid) {
+  
+  $nid = $case_study_nid;
+  $node = node_load($nid);
+  $completed = array();
+  
+  if($node->field_completed_steps) {
+    $completed_steps = $node->field_completed_steps[LANGUAGE_NONE];
+  } else {
+    return $completed;
+  }
+  
+  foreach($completed_steps as $key => $value) {
+    $completed[] = $value['target_id'];
+  }
+  return $completed;
+}
+
+function arthroshare_set_completed_steps($case_study_nid) {
+
+}
+
+function set_arthroshare_global($name, $value) {
+  global $$name;
+  $$name = $value;
+  // print_r(" " . $name . "->");
+// print_r($value . "\n");
+}
+function get_message_node() {
+  
+  $query = new EntityFieldQuery();
+  $entities = $query->entityCondition('entity_type', 'node')->propertyCondition('type', 'notification_message')->propertyCondition('title', 'Friendly Reminder')->propertyCondition('status', 1)->range(0, 1)->execute();
+  
+  if(!empty($entities['node'])) {
+    $node = node_load(array_shift(array_keys($entities['node'])));
+  }
+  
+  return $node;
+
+}
+
+function arthroshare_debug_message($message, $output_type = 'dsm') {
+  if(variable_get('arthroshare_test_mode') == 1) {
+    call_user_func($output_type, $message);
+  }
+}
+
+function arthroshare_helpers_node_view($node, $view_mode, $langcode) {
+  /*
+  if($node->title == 'Cron Job Debug') {
+    
+    
+    // $message_info = get_message_node();
+    // dsm($message_info);
+    
+    $check_all = new arthroshareCron();
+    $case_status = $check_all->check_all_open_cases();
+    
+    foreach($case_status as $variable_name => $value) {
+      $$variable_name = $value;
+    }
+    
+    $messages = array();
+    
+    foreach($notifications as $notification) {
+      $fname = $case_status[$notification]['user_profile']->field_first_name[LANGUAGE_NONE][0]['value'];
+      $message_template = $case_status[$notification]['message_out']['alert_message']->body[LANGUAGE_NONE][0]['value'];
+      $message_template_sms = $case_status[$notification]['message_out']['alert_message']->body[LANGUAGE_NONE][0]['safe_value'];
+      $personalized_message = str_replace('%%name%%', $fname, $message_template);
+      $personalized_message_sms = str_replace('%%name%%', $fname, $message_template);
+      // $personalized_message_sms = json_encode(utf8_encode($personalized_message_sms));
+      $personalized_message_sms = str_replace("\r\n", ' ', $personalized_message_sms);
+      // $personalized_message_sms = str_replace("\n", ' %0A ', $personalized_message_sms);
+      $personalized_message_sms = json_encode(utf8_encode($personalized_message_sms));
+      
+      $messages[$notification]['phone'] = $case_status[$notification]['user_profile']->field_phone[LANGUAGE_NONE][0]['value'];
+      $messages[$notification]['to'] = $case_status[$notification]['user_mail'];
+      $messages[$notification]['subject'] = $case_status[$notification]['message_out']['alert_message']->title;
+      $messages[$notification]['message'] = $personalized_message;
+      $messages[$notification]['message_sms'] = $personalized_message_sms;
+    }
+    
+    dsm($messages);
+    $send_message = new arthroshareMessages();
+    $notification = 62;
+    // Send Email
+    // $send_message = $send_message->arthroshare_send_mail('chris@adhdmedia.com', 'chris@adhdmedia.com', $messages[$notification]['subject'], $messages[$notification]['message']);
+    
+
+    // Send SMS
+    
+
+    // $auth_info = array('Username' => '16786991683', 'Password' => '52517835');
+    $sms = new arthroshareSMS();
+    $send_sms = $sms->arthroshare_send_sms(NULL, $messages[$notification]['phone'], '', $messages[$notification]['message_sms'], 'Check');
+    dsm($send_sms);
+    $send_sms = $sms->arthroshare_send_sms(NULL, $messages[$notification]['phone'], '', $messages[$notification]['message_sms']);
+    dsm($send_sms);
+  // $send_sms = $sms->arthroshare_send_sms(NULL, $messages[$notification]['phone'], $messages[$notification]['subject'], $messages[$notification]['message_sms'], 'SEND');
+  // dsm($send_sms);
+  }
+  */
+}

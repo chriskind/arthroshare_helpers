@@ -1,0 +1,10 @@
+name = Arthroshare Helper Functions
+description = Webform Helpers
+package = Arthroshare
+core = 7.x
+version = "7.x-1.0"
+files[] = includes/arthroshareMessages.inc
+files[] = includes/arthroshareDatesStepsAlerts.inc
+files[] = includes/arthroshareCron.inc
+files[] = includes/arthroshareForms.inc
+configure = admin/config/authroshare/helpers
